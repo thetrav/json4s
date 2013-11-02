@@ -115,8 +115,9 @@ class ScalaType(private val manifest: Manifest[_]) extends Equals {
 
   private[this] var _rawSimpleName: String = null
   def rawSimpleName: String = {
-    if (_rawSimpleName == null)
-      _rawSimpleName = erasure.getSimpleName
+    if (_rawSimpleName == null) {
+      _rawSimpleName = safeSimpleName(erasure)
+    }
     _rawSimpleName
   }
 
@@ -137,8 +138,9 @@ class ScalaType(private val manifest: Manifest[_]) extends Equals {
   val isPrimitive = false
 
   def isMap = classOf[Map[_, _]].isAssignableFrom(erasure)
-  def isCollection = erasure.isArray || classOf[Iterable[_]].isAssignableFrom(erasure)
+  def isCollection = erasure.isArray || classOf[Iterable[_]].isAssignableFrom(erasure) || classOf[java.util.Collection[_]].isAssignableFrom(erasure)
   def isOption = classOf[Option[_]].isAssignableFrom(erasure)
+  def isEither = classOf[Either[_, _]].isAssignableFrom(erasure)
   def <:<(that: ScalaType): Boolean = manifest <:< that.manifest
   def >:>(that: ScalaType): Boolean = manifest >:> that.manifest
 

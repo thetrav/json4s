@@ -1,5 +1,5 @@
-Scalaz support for Lift JSON
-============================
+Scalaz support for json4s
+=========================
 
 This project adds a type class to parse JSON:
 
@@ -67,14 +67,14 @@ composition >=>.
       if (y > x) Fail("max", y + " > " + x) else y.success
 
     // Creates a function JValue => Result[Person]
-    Person.applyJSON(field("name"), validate[Int]("age") >=> min(18) >=> max(60))
+    Person.applyJSON(field[String]("name"), validate[Int]("age") >==> min(18) >==> max(60))
 
 Installation
 ------------
 
 Add dependency to your SBT project description:
 
-    val lift_json_scalaz = "net.liftweb" %% "lift-json-scalaz" % "XXX"
+    val json4s_scalaz = "org.json4s" %% "json4s-scalaz" % "XXX"
 
 Links
 -----

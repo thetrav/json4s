@@ -64,14 +64,24 @@ object Extraction {
    * </pre>
    */
   def decomposeWithBuilder[T](a: Any, builder: JsonWriter[T])(implicit formats: Formats): T = {
+    internalDecomposeWithBuilder(a,builder)(formats)
+    builder.result
+  }
+
+  /** Decompose a case class into JSON.
+   *
+   * This is broken out to avoid calling builder.result when we return from recusion
+   */
+  def internalDecomposeWithBuilder[T](a: Any, builder: JsonWriter[T])(implicit formats: Formats):Unit = {
     val current = builder
     def prependTypeHint(clazz: Class[_], o: JObject) =
       JObject(JField(formats.typeHintFieldName, JString(formats.typeHints.hintFor(clazz))) :: o.obj)
 
-    def addField(name: String, v: Any, obj: JsonWriter[T]) = {
-      val f = obj.startField(name)
-      decomposeWithBuilder(v, f)
-    }
+    def addField(name: String, v: Any, obj: JsonWriter[T]) =
+      if (v != None) {
+        val f = obj.startField(name)
+        internalDecomposeWithBuilder(v, f)
+      }
 
     val serializer = formats.typeHints.serialize
     val any = a.asInstanceOf[AnyRef]
@@ -101,17 +111,29 @@ object Extraction {
       } else if (classOf[Iterable[_]].isAssignableFrom(k)) {
         val arr = current.startArray()
         val iter = any.asInstanceOf[Iterable[_]].iterator
-        while(iter.hasNext) { decomposeWithBuilder(iter.next(), arr) }
+        while(iter.hasNext) { internalDecomposeWithBuilder(iter.next(), arr) }
+        arr.endArray()
+      } else if (classOf[java.util.Collection[_]].isAssignableFrom(k)) {
+        val arr = current.startArray()
+        val iter = any.asInstanceOf[java.util.Collection[_]].iterator
+        while(iter.hasNext) { internalDecomposeWithBuilder(iter.next(), arr) }
         arr.endArray()
       } else if (k.isArray) {
         val arr = current.startArray()
         val iter = any.asInstanceOf[Array[_]].iterator
-        while(iter.hasNext) { decomposeWithBuilder(iter.next(), arr) }
+        while(iter.hasNext) { internalDecomposeWithBuilder(iter.next(), arr) }
         arr.endArray()
       } else if (classOf[Option[_]].isAssignableFrom(k)) {
         val v = any.asInstanceOf[Option[_]]
         if (v.isDefined) {
-          decomposeWithBuilder(v.get, current)
+          internalDecomposeWithBuilder(v.get, current)
+        }
+      } else if (classOf[Either[_, _]].isAssignableFrom(k)) {
+        val v = any.asInstanceOf[Either[_, _]]
+        if (v.isLeft) {
+          internalDecomposeWithBuilder(v.left.get, current)
+        } else {
+          internalDecomposeWithBuilder(v.right.get, current)
         }
       } else {
         val klass = Reflector.scalaTypeOf(k)
@@ -140,7 +162,6 @@ object Extraction {
         obj.endObject()
       }
     } else current addJValue prependTypeHint(any.getClass, serializer(any))
-    current.result
   }
 
   /** Decompose a case class into JSON.
@@ -263,7 +284,14 @@ object Extraction {
   }
 
   def extract(json: JValue, scalaType: ScalaType)(implicit formats: Formats): Any = {
-    if (scalaType.isOption) {
+    if (scalaType.isEither) {
+      import scala.util.control.Exception.allCatch
+      (allCatch opt {
+        Left(extract(json, scalaType.typeArgs(0)))
+      } orElse (allCatch opt {
+        Right(extract(json, scalaType.typeArgs(1)))
+      })).getOrElse(fail("Expected value but got " + json))
+    } else if (scalaType.isOption) {
       customOrElse(scalaType, json)(_.toOption flatMap (j => Option(extract(j, scalaType.typeArgs.head))))
     } else if (scalaType.isMap) {
       val ta = scalaType.typeArgs(1)
@@ -307,6 +335,7 @@ object Extraction {
       if (custom.isDefinedAt(tpe.typeInfo, json)) custom(tpe.typeInfo, json)
       else if (tpe.erasure == classOf[List[_]]) mkCollection(a => List(a: _*))
       else if (tpe.erasure == classOf[Set[_]]) mkCollection(a => Set(a: _*))
+      else if (tpe.erasure == classOf[java.util.ArrayList[_]]) mkCollection(a => new java.util.ArrayList[Any](a.toList.asJavaCollection))
       else if (tpe.erasure.isArray) mkCollection(mkTypedArray)
       else if (classOf[Seq[_]].isAssignableFrom(tpe.erasure)) mkCollection(a => Seq(a: _*))
       else fail("Expected collection but got " + tpe)
@@ -376,11 +405,17 @@ object Extraction {
         try {
           val x = if (json == JNothing && default.isDefined) default.get() else extract(json, descr.argType)
           if (descr.isOptional) { if (x == null) defv(None) else x }
-          else if (x == null) defv(x)
+          else if (x == null) {
+            if(!default.isDefined && descr.argType <:< ScalaType(manifest[AnyVal])) {
+              throw new MappingException("Null invalid value for a sub-type of AnyVal") 
+            } else {
+              defv(x)
+            }
+          } 
           else x
         } catch {
           case e @ MappingException(msg, _) =>
-            if (descr.isOptional) defv(None) else fail("No usable value for " + descr.name + "\n" + msg, e)
+            if (descr.isOptional  && !formats.strict) defv(None) else fail("No usable value for " + descr.name + "\n" + msg, e)
         }
       }
     }
@@ -446,6 +481,8 @@ object Extraction {
       case JInt(x) if (targetType == classOf[JavaByte]) => new JavaByte(x.byteValue)
       case JInt(x) if (targetType == classOf[String]) => x.toString
       case JInt(x) if (targetType == classOf[Number]) => x.longValue
+      case JInt(x) if (targetType == classOf[BigDecimal]) => BigDecimal(x)
+      case JInt(x) if (targetType == classOf[JavaBigDecimal]) => BigDecimal(x).bigDecimal
       case JDouble(x) if (targetType == classOf[Double]) => x
       case JDouble(x) if (targetType == classOf[JavaDouble]) => new JavaDouble(x)
       case JDouble(x) if (targetType == classOf[Float]) => x.floatValue

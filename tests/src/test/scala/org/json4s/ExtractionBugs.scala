@@ -3,6 +3,7 @@ package org.json4s
 import org.specs2.mutable.Specification
 import reflect.{ClassDescriptor, Reflector}
 import text.Document
+import java.util
 
 object NativeExtractionBugs extends ExtractionBugs[Document]("Native") with native.JsonMethods
 object JacksonExtractionBugs extends ExtractionBugs[JValue]("Native") with jackson.JsonMethods
@@ -35,6 +36,10 @@ object ExtractionBugs {
     def hello = "hello"
   }
   case class HasCompanion(nums: List[Int])
+  
+  case class ABigDecimal(num: BigDecimal)
+
+
 
 }
 abstract class ExtractionBugs[T](mod: String) extends Specification with JsonMethods[T] {
@@ -83,6 +88,23 @@ abstract class ExtractionBugs[T](mod: String) extends Specification with JsonMet
     "Issue 1169" in {
       val json = parse("""{"data":[{"one":1, "two":2}]}""")
       json.extract[Response] must_== Response(List(Map("one" -> 1, "two" -> 2)))
+    }
+
+    "Extraction should extract a java.util.ArrayList as array" in {
+      Extraction.decompose(new util.ArrayList[String]()) must_== JArray(Nil)
+    }
+
+    "Extraction should extract a java.util.ArrayList as array" in {
+      val json = parse("""["one", "two"]""")
+      val lst = new util.ArrayList[String]()
+      lst.add("one")
+      lst.add("two")
+      json.extract[util.ArrayList[String]] must_== lst
+    }
+    
+    "Parse 0 as BigDecimal" in {
+      val bd = ABigDecimal(BigDecimal("0"))
+      parse("""{"num": 0}""", useBigDecimalForDouble = true).extract[ABigDecimal] must_== bd
     }
 
   }

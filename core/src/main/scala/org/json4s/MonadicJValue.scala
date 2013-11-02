@@ -273,16 +273,17 @@ class MonadicJValue(jv: JValue) {
   def filter(p: JValue ⇒ Boolean): List[JValue] =
     fold(List[JValue]())((acc, e) ⇒ if (p(e)) e :: acc else acc).reverse
 
-//
-//  def withFilter(p: JValue => Boolean) = new JValueWithFilter(jv, p)
-//  final class JValueWithFilter(self: JValue, pred: JValue => Boolean) {
-//    def map(f: JValue => JValue): List[JValue] =
-//      fold(List.empty[JValue])((acc, e) => if (pred(e)) f(e) :: acc else acc )
-//    def flatMap(f: JValue => List[JValue]): List[JValue] =
-//      fold(List.empty[JValue])((acc, e) => if (pred(e)) f(e) ::: acc else acc )
-//    def withFilter(secondary: JValue => Boolean) = new JValueWithFilter(self, x => pred(x) && secondary(x))
-//  }
-
+  def withFilter(p: JValue => Boolean) = new JValueWithFilter(jv, p)
+  class JValueWithFilter(self: JValue, p: JValue => Boolean) {
+    def map[T](f: JValue => T): List[T] =
+      self.filter(p).map(f)
+    def flatMap[T](f: JValue => List[T]): List[T] =
+      self.filter(p).flatMap(f)
+    def foreach(f: JValue => Unit): Unit =
+      self.filter(p).foreach(f)
+    def withFilter(q: JValue => Boolean): JValueWithFilter =
+      new JValueWithFilter(self, x => p(x) && q(x))
+  }
 
   /**
    * Return a JSON where all fields matching the given predicate are removed.
@@ -294,8 +295,8 @@ class MonadicJValue(jv: JValue) {
    * }
    * </pre>
    */
-  def removeField(p: JField ⇒ Boolean): JValue = jv transformField  {
-    case x if p(x) ⇒ (x._1, JNothing)
+  def removeField(p: JField ⇒ Boolean): JValue = jv transform {
+    case JObject(l) => JObject(l.filterNot(p))
   }
 
   /**
@@ -305,9 +306,12 @@ class MonadicJValue(jv: JValue) {
    * JArray(JInt(1) :: JInt(2) :: JNull :: Nil) remove { _ == JNull }
    * </pre>
    */
-  def remove(p: JValue ⇒ Boolean): JValue = jv map {
-    case x if p(x) ⇒ JNothing
-    case x ⇒ x
+  def remove(p: JValue ⇒ Boolean): JValue = {
+    if(p(jv)) JNothing
+    else jv transform {
+      case JObject(l) => JObject(l.filterNot(f ⇒ p(f._2)))
+      case JArray(l) => JArray(l.filterNot(p))
+    }
   }
 
   private[this] def camelize(word: String): String = {
@@ -355,6 +359,9 @@ class MonadicJValue(jv: JValue) {
    * Remove the [[org.json4s.JsonAST.JNothing]] and [[org.json4s.JsonAST.JNull]] from
    * a [[org.json4s.JsonAST.JArray]] or [[org.json4s.JsonAST.JObject]]
    */
-  def noNulls = removeField(_._2 == JNull)
+  def noNulls = remove {
+    case JNull | JNothing => true
+    case _ => false
+  }
 
 }
